@@ -1,5 +1,7 @@
 import { AppState, AppStateStatus } from 'react-native';
 import axios from 'axios';
+import { auth } from '../firebaseConfig';
+import Config from '../constants/Config';
 
 class SleepDetectionService {
   private lastBackgroundTime: number | null = null;
@@ -41,7 +43,8 @@ class SleepDetectionService {
                 const sleepStartIso = new Date(this.lastBackgroundTime).toISOString();
                 const sleepEndIso = new Date(wakeTime).toISOString();
                 
-                await axios.post('http://10.0.2.2:8000/users/user123/sleep/auto', {
+                const uid = auth.currentUser?.uid || 'user123';
+                await axios.post(`${Config.API_BASE_URL}/users/${uid}/sleep/auto`, {
                     sleep_start: sleepStartIso,
                     sleep_end: sleepEndIso
                 });
@@ -62,7 +65,8 @@ class SleepDetectionService {
       const sleepStart = new Date(wakeTime.getTime() - (hours * 60 * 60 * 1000));
       
       try {
-         const res = await axios.post('http://10.0.2.2:8000/users/user123/sleep/auto', {
+         const uid = auth.currentUser?.uid || 'user123';
+         const res = await axios.post(`${Config.API_BASE_URL}/users/${uid}/sleep/auto`, {
              sleep_start: sleepStart.toISOString(),
              sleep_end: wakeTime.toISOString()
          });

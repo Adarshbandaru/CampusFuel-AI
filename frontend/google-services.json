@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "900928347196",
+    "project_id": "campusfuel-ai",
+    "storage_bucket": "campusfuel-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:900928347196:android:2b833aa32210ff387ff739",
+        "android_client_info": {
+          "package_name": "com.adarsh_bandaru.frontend"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "900928347196-fqfnitr168ua2luevfr1v2lfujuaa20f.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCKvI0ix2bmeRXeNUd6Nro2cFJ_tZYGku8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "900928347196-fqfnitr168ua2luevfr1v2lfujuaa20f.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

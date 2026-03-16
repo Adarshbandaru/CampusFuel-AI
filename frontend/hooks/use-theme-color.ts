@@ -1,21 +1,21 @@
-/**
- * Learn more about light and dark modes:
- * https://docs.expo.dev/guides/color-schemes/
- */
-
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Colors } from '../src/constants/Colors';
+import { useTheme } from '../src/context/ThemeContext';
 
 export function useThemeColor(
   props: { light?: string; dark?: string },
   colorName: keyof typeof Colors.light & keyof typeof Colors.dark
 ) {
-  const theme = useColorScheme() ?? 'light';
-  const colorFromProps = props[theme];
+  const { mode, colors } = useTheme();
+  // Determine if we should use light or dark tokens based on current mode
+  // Note: 'system' logic is handled inside ThemeContext, so here we can just use colors[colorName]
+  // BUT useThemeColor is designed to take a property list.
+  
+  const theme = mode === 'system' ? (colors.text === '#FFFFFF' ? 'dark' : 'light') : mode; // fallback logic
+  const colorFromProps = props[theme as 'light' | 'dark'];
 
   if (colorFromProps) {
     return colorFromProps;
   } else {
-    return Colors[theme][colorName];
+    return (colors as any)[colorName];
   }
 }

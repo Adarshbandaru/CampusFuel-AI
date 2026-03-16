@@ -1,95 +1,135 @@
 import { Tabs } from 'expo-router';
-// We'll use some simple icons. For Expo, @expo/vector-icons is built-in.
-import { FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useEffect } from 'react';
+import { View } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
-import { syncPendingRequests } from '../utils/offlineSync';
+import { useTheme } from '../../src/context/ThemeContext';
+import { ErrorBoundary } from '../../src/components/common/ErrorBoundary';
+
 
 export default function TabLayout() {
+  const { colors, theme } = useTheme();
+
   useEffect(() => {
     // Global listener for network state changes
     const unsubscribe = NetInfo.addEventListener(state => {
       console.log("[Network State]", state.isConnected ? "Online" : "Offline");
       if (state.isConnected) {
-        syncPendingRequests();
+        // Firestore handles auto-syncing upon reconnect
       }
+
     });
 
     return () => unsubscribe();
   }, []);
 
+  const renderIcon = (IconComponent: any, name: string, color: string, focused: boolean, size: number) => (
+    <View style={{ alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
+      <IconComponent name={name as any} size={size} color={color} />
+      {focused && (
+        <View 
+          style={{ 
+            width: 4, 
+            height: 4, 
+            borderRadius: 2, 
+            backgroundColor: color, 
+            position: 'absolute',
+            bottom: -8,
+            shadowColor: color, 
+            shadowOpacity: 0.6, 
+            shadowRadius: 3,
+            elevation: 1 
+          }} 
+        />
+      )}
+    </View>
+  );
+
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: true,
-        tabBarActiveTintColor: '#3b82f6',
-        tabBarInactiveTintColor: '#a0aec0',
-        tabBarStyle: {
-          backgroundColor: '#fff',
-          borderTopColor: '#e2e8f0',
-          elevation: 10,
-          shadowColor: '#000',
-          shadowOpacity: 0.1,
-          shadowRadius: 10,
-        },
-        headerStyle: {
-          backgroundColor: '#3b82f6',
-        },
-        headerTintColor: '#fff',
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
-      }}
-    >
+    <ErrorBoundary>
+      <Tabs
+        screenOptions={{
+          headerShown: true,
+          tabBarActiveTintColor: colors.tabIconSelected,
+          tabBarInactiveTintColor: colors.tabIconDefault,
+          tabBarStyle: {
+            backgroundColor: colors.tabBarBg,
+            borderTopColor: colors.border,
+            borderTopWidth: 1,
+            height: 72,
+            elevation: 0,
+            shadowOpacity: 0,
+            paddingBottom: 12,
+            paddingTop: 8,
+          },
+          tabBarLabelStyle: {
+            fontSize: 10,
+            fontWeight: '700',
+          },
+          headerStyle: {
+            backgroundColor: colors.headerBg,
+            elevation: 0,
+            shadowOpacity: 0,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+          },
+          headerTintColor: colors.text,
+          headerTitleStyle: {
+            fontWeight: '800',
+            fontSize: 18,
+            color: colors.text,
+          },
+        }}
+      >
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="view-dashboard" size={24} color={color} />,
+          title: 'Home',
+          headerShown: false,
+          tabBarLabel: 'Home',
+          tabBarIcon: ({ color, focused }) => renderIcon(Ionicons, "home", color, focused, 24),
         }}
       />
       <Tabs.Screen
-        name="meal"
+        name="log"
         options={{
-          title: 'Meal Log',
-          tabBarIcon: ({ color }) => <Ionicons name="restaurant" size={24} color={color} />,
+          title: 'Log',
+          headerShown: false,
+          tabBarLabel: 'Log',
+          tabBarIcon: ({ color, focused }) => renderIcon(Ionicons, "add-circle", color, focused, 28),
         }}
       />
       <Tabs.Screen
-        name="water"
+        name="insights"
         options={{
-          title: 'Water Tracker',
-          tabBarIcon: ({ color }) => <Ionicons name="water" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="timetable"
-        options={{
-          title: 'Timetable',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="calendar-clock" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="report"
-        options={{
-          title: 'Weekly Report',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="file-chart" size={24} color={color} />,
+          title: 'Insights',
+          headerShown: false,
+          tabBarLabel: 'Insights',
+          tabBarIcon: ({ color, focused }) => renderIcon(Ionicons, "analytics", color, focused, 24),
         }}
       />
       <Tabs.Screen
         name="coach"
         options={{
           title: 'AI Coach',
-          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="robot-excited" size={24} color={color} />,
+          headerShown: false,
+          tabBarLabel: 'Coach',
+          tabBarIcon: ({ color, focused }) => renderIcon(MaterialCommunityIcons, "robot", color, focused, 24),
         }}
       />
       <Tabs.Screen
-        name="settings"
+        name="more"
         options={{
-          title: 'Settings',
-          tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
+          title: 'Me',
+          headerShown: false,
+          tabBarLabel: 'Me',
+          tabBarIcon: ({ color, focused }) => renderIcon(Ionicons, "person", color, focused, 24),
         }}
       />
-    </Tabs>
+      {/* Hidden secondary screens */}
+      <Tabs.Screen name="timetable" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
+      </Tabs>
+    </ErrorBoundary>
   );
 }

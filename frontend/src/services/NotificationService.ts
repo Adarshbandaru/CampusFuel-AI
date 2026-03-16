@@ -1,6 +1,57 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import axios from 'axios';
+import Config from '../constants/Config';
+import { auth } from '../firebaseConfig';
+
+// ─── Android Notification Channels ────────────────────────────────────────────
+export async function setupNotificationChannels() {
+  if (Platform.OS !== 'android') return;
+
+  await Notifications.setNotificationChannelAsync('water_reminders', {
+    name: 'Water Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    enableVibrate: true,
+    sound: 'default',
+    lightColor: '#0EA5E9',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  });
+
+  await Notifications.setNotificationChannelAsync('meal_reminders', {
+    name: 'Meal Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 500, 200, 500],
+    enableVibrate: true,
+    sound: 'default',
+    lightColor: '#F59E0B',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  });
+
+  await Notifications.setNotificationChannelAsync('sleep_reminders', {
+    name: 'Sleep Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 300, 200, 300],
+    enableVibrate: true,
+    sound: 'default',
+    lightColor: '#6366F1',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  });
+
+  await Notifications.setNotificationChannelAsync('campus_reminders', {
+    name: 'Campus Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    enableVibrate: true,
+    sound: 'default',
+    lightColor: '#4F46E5',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  });
+}
 
 let dynamicTimetable: Record<string, any[]> = {};
 let currentMode: string = "at_start";
@@ -8,13 +59,14 @@ const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", 
 
 export async function fetchLiveTimetable() {
   try {
-    const res = await axios.get('http://10.0.2.2:8000/users/user123/timetable');
+    const uid = auth.currentUser?.uid || 'user123';
+    const res = await axios.get(`${Config.API_BASE_URL}/users/${uid}/timetable`);
     if (res.data && res.data.timetable) {
       dynamicTimetable = res.data.timetable;
     }
     
     // Also fetch settings to apply buffers
-    const setRes = await axios.get('http://10.0.2.2:8000/users/user123/settings');
+    const setRes = await axios.get(`${Config.API_BASE_URL}/users/${uid}/settings`);
     if (setRes.data && setRes.data.notification_mode) {
       currentMode = setRes.data.notification_mode;
     }
@@ -24,6 +76,10 @@ export async function fetchLiveTimetable() {
 }
 
 export async function requestPermissions() {
+  if (Platform.OS === 'web') return false;
+  // Setup Android channels first
+  await setupNotificationChannels();
+
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
   
@@ -38,17 +94,22 @@ export async function requestPermissions() {
   }
 
   // Setup actionable categories
-  if (Platform.OS !== 'web') {
+  if ((Platform.OS as any) !== 'web') {
     await Notifications.setNotificationCategoryAsync('WATER_REMINDER', [
-      { identifier: 'complete', buttonTitle: 'Completed', options: { opensAppToForeground: false } },
+      { identifier: 'complete', buttonTitle: '✅ Done', options: { opensAppToForeground: false } },
       { identifier: 'skip', buttonTitle: 'Skip', options: { opensAppToForeground: false } },
-      { identifier: 'remind_later', buttonTitle: 'Remind me later', options: { opensAppToForeground: false } }
+      { identifier: 'remind_later', buttonTitle: '⏰ Later', options: { opensAppToForeground: false } }
     ]);
 
     await Notifications.setNotificationCategoryAsync('MEAL_REMINDER', [
-      { identifier: 'complete', buttonTitle: 'Completed', options: { opensAppToForeground: false } },
+      { identifier: 'complete', buttonTitle: '✅ Logged', options: { opensAppToForeground: false } },
       { identifier: 'skip', buttonTitle: 'Skip', options: { opensAppToForeground: false } },
-      { identifier: 'remind_later', buttonTitle: 'Remind me later', options: { opensAppToForeground: false } }
+      { identifier: 'remind_later', buttonTitle: '⏰ Later', options: { opensAppToForeground: false } }
+    ]);
+
+    await Notifications.setNotificationCategoryAsync('SLEEP_REMINDER', [
+      { identifier: 'complete', buttonTitle: '😴 Going to sleep', options: { opensAppToForeground: false } },
+      { identifier: 'remind_later', buttonTitle: '⏰ 30 min later', options: { opensAppToForeground: false } }
     ]);
   }
 
@@ -111,8 +172,16 @@ export function findAvailableTime(targetDate: Date): Date {
 }
 
 export async function scheduleWaterReminders() {
+  if (Platform.OS === 'web') return;
   await fetchLiveTimetable();
   await Notifications.cancelAllScheduledNotificationsAsync();
+  
+  let dashData: any = null;
+  try {
+     const uid = auth.currentUser?.uid || 'user123';
+     const res = await axios.get(`${Config.API_BASE_URL}/users/${uid}/dashboard`);
+     dashData = res.data;
+  } catch(e) {}
 
   let baseTime = new Date();
   baseTime.setMinutes(0, 0, 0);
@@ -123,13 +192,26 @@ export async function scheduleWaterReminders() {
     if (target.getHours() >= 8 && target.getHours() <= 22) {
       const safeTime = findAvailableTime(target);
       
+      let bodyText = "Time to drink water. Add 500 ml now.";
+      if (dashData) {
+         const remaining = dashData.water_goal_liters - dashData.water_drunk_liters;
+         if (remaining <= 0.5 && remaining > 0) {
+            bodyText = `Great job today. Only ${Math.round(remaining*1000)}ml water left to reach your goal.`;
+         } else if (remaining <= 0) {
+            bodyText = "Hydration goal reached! Keep it up if you're still thirsty.";
+         } else {
+            bodyText = "You haven't logged water for 2 hours. Drink 250ml.";
+         }
+      }
+      
       await Notifications.scheduleNotificationAsync({
         content: {
           title: "💧 Time to hydrate!",
-          body: "Time to drink water. Add 500 ml now.",
+          body: bodyText,
           categoryIdentifier: 'WATER_REMINDER',
           sound: true,
           vibrate: [0, 250, 250, 250],
+          ...(Platform.OS === 'android' && { channelId: 'water_reminders' }),
         },
         trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: safeTime },
       });
@@ -138,6 +220,7 @@ export async function scheduleWaterReminders() {
 }
 
 export async function scheduleDeficitWarning(currentLiters: number) {
+  if (Platform.OS === 'web') return;
   if (currentLiters >= 2.5) return;
   
   const target = new Date();
@@ -158,7 +241,15 @@ export async function scheduleDeficitWarning(currentLiters: number) {
 }
 
 export async function scheduleMealReminders() {
+  if (Platform.OS === 'web') return;
   // Assuming live timetable already fetched by water reminder wrapper
+  let dashData: any = null;
+  try {
+     const uid = auth.currentUser?.uid || 'user123';
+     const res = await axios.get(`${Config.API_BASE_URL}/users/${uid}/dashboard`);
+     dashData = res.data;
+  } catch(e) {}
+
   const meals = [
     { name: 'Breakfast', hour: 8, min: 0 },
     { name: 'Lunch', hour: 13, min: 0 },
@@ -176,14 +267,30 @@ export async function scheduleMealReminders() {
     }
 
     const safeTime = findAvailableTime(target);
+    
+    let bodyText = `Log your ${meal.name} to track your calories and protein.`;
+    if (dashData) {
+        if (meal.name === 'Dinner' || meal.name === 'Protein shake') {
+            const missingPro = Math.round(dashData.protein_goal - dashData.protein_consumed);
+            const missingCals = Math.round(dashData.calories_goal - dashData.calories_consumed);
+            if (missingPro > 0 && missingPro > 10) {
+                bodyText = `You are ${missingPro}g short of today's protein goal.`;
+            } else if (missingCals > 0 && missingCals > 100) {
+                bodyText = `You are ${missingCals} calories short. Have a good ${meal.name}!`;
+            } else {
+                bodyText = `Goals met! Enjoy your ${meal.name}.`;
+            }
+        }
+    }
 
     await Notifications.scheduleNotificationAsync({
       content: {
         title: `🍽️ Time for ${meal.name}!`,
-        body: `Log your ${meal.name} to track your calories and protein.`,
+        body: bodyText,
         categoryIdentifier: 'MEAL_REMINDER',
         sound: true,
         vibrate: [0, 500, 200, 500],
+        ...(Platform.OS === 'android' && { channelId: 'meal_reminders' }),
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: safeTime },
     });
@@ -191,6 +298,7 @@ export async function scheduleMealReminders() {
 }
 
 export async function scheduleMessWarning() {
+  if (Platform.OS === 'web') return;
   const dayName = days[new Date().getDay()];
   const todaysClasses = dynamicTimetable[dayName] || [];
   
@@ -238,6 +346,7 @@ export async function scheduleMessWarning() {
 }
 
 export async function scheduleMissedMealAlert() {
+  if (Platform.OS === 'web') return;
   // Feature 6: Missed Meal Alert (>6 Hours without food)
   // Simulating the interval logic: schedules a warning for 2:30 PM (6 hours after breakfast)
   const target = new Date();
@@ -252,8 +361,164 @@ export async function scheduleMissedMealAlert() {
         categoryIdentifier: 'MEAL_REMINDER',
         sound: true,
         vibrate: [0, 500, 200, 500],
+        ...(Platform.OS === 'android' && { channelId: 'meal_reminders' }),
       },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: safeTime },
     });
+  }
+}
+
+// ─── Sleep Reminder ─────────────────────────────────────────────────────────
+
+export async function scheduleSleepReminder(targetHour: number = 23) {
+  if (Platform.OS === 'web') return;
+  const target = new Date();
+  target.setHours(targetHour, 0, 0, 0);
+  if (target < new Date()) {
+    target.setDate(target.getDate() + 1);
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '🌙 Time to wind down',
+      body: 'Consistent sleep improves your Consistency Score. Try to sleep now.',
+      categoryIdentifier: 'SLEEP_REMINDER',
+      sound: true,
+      vibrate: [0, 300, 200, 300],
+      ...(Platform.OS === 'android' && { channelId: 'sleep_reminders' }),
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: target },
+  });
+}
+
+// ─── Campus Mode: Pre-Class Water Reminder ──────────────────────────────────
+// Called by Campus Routine Engine when Campus Mode is enabled.
+// Schedules a water reminder 10 minutes before each class.
+
+export async function scheduleCampusReminders(classes: { day: string; start: string; end: string; subject: string }[]) {
+  if (Platform.OS === 'web') return;
+  const today = days[new Date().getDay()];
+  const todayClasses = classes.filter(c => c.day === today);
+
+  for (const cls of todayClasses) {
+    const [h, m] = cls.start.split(':').map(Number);
+    const target = new Date();
+    target.setHours(h, m - 10, 0, 0); // 10 minutes before class
+
+    if (target < new Date()) continue;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `📚 ${cls.subject} in 10 minutes`,
+        body: "Drink water before your class and pack a snack if it's a long session.",
+        sound: true,
+        vibrate: [0, 250, 250, 250],
+        ...(Platform.OS === 'android' && { channelId: 'campus_reminders' }),
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: target },
+    });
+  }
+}
+
+// ─── Routine AI Notifications ────────────────────────────────────────────────
+export async function scheduleRoutineNotifications(plan: any) {
+  if (Platform.OS === 'web') return;
+
+  // Notification 1 - Morning
+  // Extract time from morning_tip if possible, else 07:30
+  let morningTarget = new Date();
+  morningTarget.setHours(7, 30, 0, 0);
+
+  const timeMatch = plan.morning_tip?.match(/(\d{1,2}:\d{2}(?:\s?[aApP][mM])?)/);
+  if (timeMatch) {
+    let tStr = timeMatch[1].toLowerCase().replace(/\s/g, '');
+    let h = 0, m = 0;
+    if (tStr.includes('am') || tStr.includes('pm')) {
+      const pm = tStr.includes('pm');
+      tStr = tStr.replace('am', '').replace('pm', '');
+      [h, m] = tStr.split(':').map(Number);
+      if (pm && h < 12) h += 12;
+      if (!pm && h === 12) h = 0;
+    } else {
+      [h, m] = tStr.split(':').map(Number);
+    }
+    const tempDate = new Date();
+    tempDate.setHours(h, m, 0, 0);
+    // 30 mins before
+    morningTarget = new Date(tempDate.getTime() - 30 * 60000);
+  }
+
+  if (morningTarget > new Date() && plan.morning_tip) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'routine_morning',
+      content: {
+        title: "☀️ Morning Guide",
+        body: plan.morning_tip,
+        sound: true,
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: morningTarget },
+    });
+  }
+
+  // Notification 2 - Afternoon Hydration
+  let hydroTarget = new Date();
+  hydroTarget.setHours(14, 0, 0, 0);
+  if (hydroTarget > new Date() && plan.hydration_tip && plan.hydration_tip.includes("behind")) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'routine_hydration',
+      content: {
+        title: "💧 Hydration Check",
+        body: plan.hydration_tip,
+        sound: true,
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: hydroTarget },
+    });
+  }
+
+  // Notification 3 - Sleep Reminder
+  let sleepTarget = new Date();
+  const sleepTimeMatch = plan.sleep_tip?.match(/bed by (\d{1,2}:\d{2}\s?[aApP][mM])/i);
+  if (sleepTimeMatch) {
+    let sStr = sleepTimeMatch[1].toLowerCase().replace(/\s/g, '');
+    let sh = 0, sm = 0;
+    const pm = sStr.includes('pm');
+      sStr = sStr.replace('am', '').replace('pm', '');
+      [sh, sm] = sStr.split(':').map(Number);
+      if (pm && sh < 12) sh += 12;
+      if (!pm && sh === 12) sh = 0;
+    
+    sleepTarget.setHours(sh, sm, 0, 0);
+    // 60 mins before
+    sleepTarget = new Date(sleepTarget.getTime() - 60 * 60000);
+  } else {
+    sleepTarget.setHours(22, 0, 0, 0);
+  }
+
+  if (sleepTarget > new Date() && plan.sleep_tip) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'routine_sleep',
+      content: {
+        title: "🌙 Sleep Prep",
+        body: plan.sleep_tip,
+        sound: true,
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: sleepTarget },
+    });
+  }
+
+  if (plan.exam_mode && plan.focus_tip) {
+    let focusTarget = new Date();
+    focusTarget.setHours(22, 0, 0, 0);
+    if (focusTarget > new Date()) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: 'routine_focus',
+        content: {
+          title: "🎯 Exam Focus",
+          body: plan.focus_tip,
+          sound: true,
+        },
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: focusTarget },
+      });
+    }
   }
 }

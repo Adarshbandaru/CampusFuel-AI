@@ -1,642 +1,1203 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Modal } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Animated, Dimensions, Modal, Alert, TextInput, Easing } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { offlineGet } from '../utils/offlineSync';
+import Svg, { Circle, G } from 'react-native-svg';
+import { useTheme } from '../../src/context/ThemeContext';
+import { useToast } from '../../src/context/ToastContext';
+import { auth } from '../../src/firebaseConfig';
+import { secureStorage } from '../../src/storage/secureStorage';
 
-// A simple custom progress bar
-const ProgressBar = ({ progress, color = '#3b82f6', height = 10, label = '' }: { progress: number, color?: string, height?: number, label?: string }) => {
-  const boundedProgress = Math.max(0, Math.min(100, progress));
-  return (
-    <View style={styles.progressContainer}>
-      {label ? <Text style={styles.progressLabel}>{label} ({boundedProgress}%)</Text> : null}
-      <View style={[styles.progressBackground, { height }]}>
-        <View style={[styles.progressFill, { width: `${boundedProgress}%`, backgroundColor: color, height }]} />
-      </View>
-    </View>
-  );
-};
+// Logic & Data Layers
+import { healthEngine, scoreEngine, nutritionEngine, timelineEngine, coachEngine } from '../../src/services';
+import { logStorage, userStorage } from '../../src/storage';
+
+const { width } = Dimensions.get('window');
+
+import { ScoreCard } from '../../src/components/dashboard/ScoreCard';
+import { DashboardHeader } from '../../src/components/dashboard/DashboardHeader';
+import { TodaysWins } from '../../src/components/dashboard/TodaysWins';
+import { ProgressSection } from '../../src/components/dashboard/ProgressSection';
+import { WeeklyTracker } from '../../src/components/dashboard/WeeklyTracker';
+import { QuickActions } from '../../src/components/dashboard/QuickActions';
+import { AIInsight } from '../../src/components/dashboard/AIInsight';
+import { DashboardSkeleton } from '../../src/components/common/Skeleton';
+import { StudentRoutineCard } from '../../src/components/dashboard/StudentRoutineCard';
+
+// Components extracted
 
 export default function Dashboard() {
+  const { colors, theme } = useTheme();
+  const { showToast } = useToast();
   const [data, setData] = useState<any>(null);
-  const [summary, setSummary] = useState<any>(null);
-  const [insights, setInsights] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [quickActionsVisible, setQuickActionsVisible] = useState(false);
+  const [reminders, setReminders] = useState<any[]>([]);
+  const [campusModeEnabled, setCampusModeEnabled] = useState(false);
+  const [customFoodVisible, setCustomFoodVisible] = useState(false);
+  const [scoreDetailsVisible, setScoreDetailsVisible] = useState(false);
+  const [newFoodName, setNewFoodName] = useState('');
+  const [newFoodCals, setNewFoodCals] = useState('');
+  const [newFoodPro, setNewFoodPro] = useState('');
+  const [userName, setUserName] = useState('User');
+  const [mealPickerVisible, setMealPickerVisible] = useState(false);
+  const [weightModalVisible, setWeightModalVisible] = useState(false);
+  const [sleepModalVisible, setSleepModalVisible] = useState(false);
+  const [weightInput, setWeightInput] = useState('');
+  const [sleepInput, setSleepInput] = useState('');
 
-  // Hidden Developer Mode State
-  const [devTapCount, setDevTapCount] = useState(0);
-  const [showDevModal, setShowDevModal] = useState(false);
-  const [devInsights, setDevInsights] = useState<any>(null);
+  // Animations
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
+  const scoreGlow = useRef(new Animated.Value(0.3)).current;
+  const cardSlide1 = useRef(new Animated.Value(60)).current;
+  const cardSlide2 = useRef(new Animated.Value(60)).current;
+  const cardSlide3 = useRef(new Animated.Value(60)).current;
+  const cardFade1 = useRef(new Animated.Value(0)).current;
+  const cardFade2 = useRef(new Animated.Value(0)).current;
+  const cardFade3 = useRef(new Animated.Value(0)).current;
+  const pulseAnimFAB = useRef(new Animated.Value(1)).current;
 
-  const handleDevTrigger = async () => {
-    const newCount = devTapCount + 1;
-    if (newCount >= 5) {
-      setDevTapCount(0);
-      setShowDevModal(true);
+  // Load user name from storage
+  useEffect(() => {
+    const loadUserName = async () => {
       try {
-        const res = await offlineGet('http://10.0.2.2:8000/users/user123/developer/insights');
-        if (res.data) setDevInsights(res.data);
-      } catch (e) {}
-    } else {
-      setDevTapCount(newCount);
-      // Reset count after 2 seconds of inactivity
-      setTimeout(() => setDevTapCount(0), 2000);
-    }
-  };
+        const profileStr = await secureStorage.getItem('user_profile');
+        if (profileStr) {
+          const profile = JSON.parse(profileStr);
+          if (profile.name) setUserName(profile.name.split(' ')[0]);
+        }
+      } catch (e) { }
+    };
+    loadUserName();
+  }, []);
 
-  // Fetch dashboard + intelligence modules
+  // Entrance animations
+  useEffect(() => {
+    if (!loading && data) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+      ]).start();
+
+      // Staggered card animations
+      Animated.stagger(120, [
+        Animated.parallel([
+          Animated.timing(cardFade1, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(cardSlide1, { toValue: 0, duration: 400, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+        ]),
+        Animated.parallel([
+          Animated.timing(cardFade2, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(cardSlide2, { toValue: 0, duration: 400, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+        ]),
+        Animated.parallel([
+          Animated.timing(cardFade3, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(cardSlide3, { toValue: 0, duration: 400, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+        ]),
+      ]).start();
+
+      // Pulsing glow on score
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(scoreGlow, { toValue: 1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(scoreGlow, { toValue: 0.3, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        ])
+      ).start();
+
+      // Pulsing FAB
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnimFAB, { toValue: 1.05, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnimFAB, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start();
+    }
+  }, [loading, data]);
+
   const loadDashboard = async () => {
     try {
-      const [dashRes, insightsRes, summaryRes] = await Promise.all([
-        offlineGet('http://10.0.2.2:8000/users/user123/dashboard', { timeout: 3000 }),
-        offlineGet('http://10.0.2.2:8000/users/user123/intelligence/insights'),
-        offlineGet('http://10.0.2.2:8000/users/user123/summary/morning'),
-      ]);
+      if (!auth.currentUser) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
-      if (dashRes.data) setData(dashRes.data);
-      if (insightsRes.data) setInsights(insightsRes.data.insights);
-      if (summaryRes.data) setSummary(summaryRes.data);
-    } catch (e) {
-      // Fallback data
-      setData({
-        water_drunk_liters: 2.5,
-        water_goal_liters: 4.0,
-        calories_consumed: 1250,
-        calories_goal: 2500,
-        protein_consumed: 65,
-        protein_goal: 150,
-        meals_today: 2,
-        life_consistency_score: 55,
-        score_reason: "Score reduced due to low hydration.",
-        score_breakdown: { "Nutrition": 10, "Hydration": 5, "Sleep": 15, "Habits": 10, "Discipline": 15 },
-        habit_streak: 12,
-        meals_tracker: {
-          "Breakfast": true,
-          "Lunch": true,
-          "Snack": false,
-          "Dinner": false,
-          "Protein shake": false
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Update daily summary for today
+      try {
+        await logStorage.saveDailySummary();
+      } catch (sumErr) {
+        console.warn("Failed to save daily summary:", sumErr);
+      }
+
+      // 1. Fetch Real User Data & Goals from Firestore
+      console.log("[Dashboard] Starting data fetch for UID:", auth.currentUser?.uid);
+      
+      let todaySum, goals, prefs, xp, streaks, timetable, yesterdayLog;
+      
+      try { todaySum = await logStorage.getTodaysSummary(today); } 
+      catch (e) { console.error("Error fetching Today Summary:", e); throw e; }
+      
+      try { goals = await userStorage.getHealthGoals(); } 
+      catch (e) { console.error("Error fetching Health Goals:", e); throw e; }
+      
+      try { prefs = await userStorage.getPreferences(); } 
+      catch (e) { console.error("Error fetching Preferences:", e); throw e; }
+      
+      try { xp = await userStorage.getXP(); } 
+      catch (e) { console.error("Error fetching XP:", e); throw e; }
+      
+      try { streaks = await userStorage.getStreaks(); } 
+      catch (e) { console.error("Error fetching Streaks:", e); throw e; }
+      
+      try { timetable = await userStorage.getTimetable(); } 
+      catch (e) { console.error("Error fetching Timetable:", e); throw e; }
+      
+      try { yesterdayLog = await logStorage.getDailyLog(new Date(Date.now() - 86400000)); } 
+      catch (e) { console.error("Error fetching Yesterday Log:", e); throw e; }
+
+      const isCampusMode = prefs?.notificationsEnabled || false; 
+      setCampusModeEnabled(isCampusMode);
+
+      // 2. Calculate Health Metrics using healthEngine
+      const mappedGoals = {
+        waterLiters: goals?.waterGoalLiters || 3,
+        calories: goals?.caloriesGoal || 2000,
+        protein: goals?.proteinGoal || 150,
+        sleepHours: goals?.sleepGoalHours || 8,
+      };
+
+      const waterProg = healthEngine.getWaterProgress(todaySum?.totalWaterMl || 0, mappedGoals.waterLiters);
+      const nutriProg = healthEngine.getNutritionProgress(todaySum?.totalCalories || 0, todaySum?.totalProtein || 0, mappedGoals);
+      const sleepMetrics = healthEngine.getSleepMetrics(todaySum?.sleepMinutes || 0, mappedGoals.sleepHours);
+      const mealStatus = healthEngine.getMealStatus(todaySum?.mealsCount || 0, new Date().getHours());
+
+      // 3. Calculate Consistency Score using scoreEngine
+      const scoreInputs = {
+        calories: todaySum?.totalCalories || 0,
+        caloriesGoal: goals?.caloriesGoal || 2000,
+        protein: todaySum?.totalProtein || 0,
+        proteinGoal: goals?.proteinGoal || 150,
+        mealsLogged: todaySum?.mealsCount || 0,
+        waterLiters: (todaySum?.totalWaterMl || 0) / 1000,
+        waterGoalLiters: goals?.waterGoalLiters || 3,
+        sleepHours: (todaySum?.sleepMinutes || 0) / 60,
+        sleepGoalHours: goals?.sleepGoalHours || 8,
+        streaks: {
+          water: streaks?.water || 0,
+          protein: streaks?.protein || 0,
+          calories: streaks?.calories || 0,
+          sleep: streaks?.sleep || 0,
         },
-        level: 1,
-        xp_current: 0,
-        xp_target: 100,
-        xp_progress_percentage: 0,
-        streak_counters: {"Water": 0, "Meal": 0, "Sleep": 0, "Skincare": 0},
-        achievements: [],
-        prediction_insight: "No prediction data",
-        preventive_suggestion: "",
-        adaptive_reminders: []
-      });
-      setSummary({
-        greeting: "Good morning",
-        day: "Today",
-        date: new Date().toLocaleDateString(),
-        schedule: [
-          { label: "Breakfast", time: "Before 9:30 AM" },
-          { label: "Lunch", time: "1:00 PM" },
-          { label: "Dinner", time: "8:00 PM" }
+      };
+
+      const scoreBreakdownResult = scoreEngine.calculateConsistencyScore(scoreInputs);
+      const xpLevel = scoreEngine.getLevelFromXP(xp);
+      const scoreLabel = scoreEngine.getScoreLabel(scoreBreakdownResult.total);
+
+      // 4. Build Smart Daily Timeline using timelineEngine
+      const dayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
+      const classes: any[] = isCampusMode ? (timetable[dayName] || []) : [];
+      
+      const timelineData = timelineEngine.buildDailyTimeline(classes, prefs?.sleepTargetHour || 23);
+      const nextAction = timelineEngine.getNextAction(timelineData);
+
+      // 5. Final Data Assemble
+      const freshData = {
+        water_drunk_liters: (todaySum?.totalWaterMl || 0) / 1000,
+        water_goal_liters: mappedGoals.waterLiters,
+        calories_consumed: todaySum?.totalCalories || 0,
+        calories_goal: mappedGoals.calories,
+        protein_consumed: todaySum?.totalProtein || 0,
+        protein_goal: mappedGoals.protein,
+        life_consistency_score: scoreBreakdownResult.total,
+        score_label: scoreLabel.label,
+        score_color: scoreLabel.color,
+        score_breakdown: {
+          "Nutrition": scoreBreakdownResult.percentages.nutrition,
+          "Hydration": scoreBreakdownResult.percentages.hydration,
+          "Sleep": scoreBreakdownResult.percentages.sleep,
+          "Habits": scoreBreakdownResult.percentages.habits,
+          "Discipline": scoreBreakdownResult.percentages.discipline
+        },
+        sleep_hours_actual: (todaySum?.sleepMinutes || 0) / 60,
+        sleep_hours_goal: mappedGoals.sleepHours,
+        sleep_quality_score: sleepMetrics.qualityScore,
+        sleep_consistency: 0, 
+        streak_counters: streaks,
+        meals_tracker: mealStatus,
+        xp_level: xpLevel,
+        daily_challenge: {
+          title: "Today's Challenge",
+          tasks: [
+            `Drink ${mappedGoals.waterLiters}L water`,
+            `Eat ${mappedGoals.protein}g protein`,
+            `Consistency check-in`
+          ],
+          reward: "+20 Consistency XP"
+        },
+        habit_recovery: [] as any[],
+        detailed_analysis: [
+            `Nutrition: ${scoreBreakdownResult.nutrition} / 30`,
+            `Hydration: ${scoreBreakdownResult.hydration} / 20`,
+            `Sleep: ${scoreBreakdownResult.sleep} / 20`,
+            `Habits: ${scoreBreakdownResult.habits} / 15`,
+            `Discipline: ${scoreBreakdownResult.discipline} / 15`,
+            `Current Title: ${xpLevel.title} (Level ${xpLevel.level})`,
+            waterProg.percentage >= 100 ? "Great job on hydration!" : "Keep drinking water to reach your goal."
         ],
-        water_target: "4 L",
-        predicted_risks: ["Low hydration risk before noon."],
-        habit_focus: ["Start a new habit streak today!"],
-      });
-      setInsights([
-        "You skipped lunch twice this week.",
-        "Your water intake is usually low before noon.",
-        "You often delay dinner on Thursdays."
-      ]);
+        timelineData,
+        nextAction,
+        summary: { greeting: getGreetingString(), summary_msg: scoreLabel.label }
+      };
+
+      // 4.5 Gentle Habit Recovery logic
+      const recovery: any[] = [];
+      if (yesterdayLog) {
+        if ((yesterdayLog.totalWaterMl || 0) < mappedGoals.waterLiters * 1000) {
+          recovery.push({
+            type: 'Hydration',
+            message: "You missed your hydration goal yesterday. Try drinking water regularly throughout the day.",
+            icon: 'water',
+            color: '#0EA5E9'
+          });
+        }
+        if ((yesterdayLog.totalProtein || 0) < mappedGoals.protein) {
+          recovery.push({
+            type: 'Protein',
+            message: "Protein intake was slightly low yesterday. Consider adding milk, paneer, or peanut butter today.",
+            icon: 'arm-flex',
+            color: '#8B5CF6'
+          });
+        }
+        if ((yesterdayLog.sleepMinutes || 0) < mappedGoals.sleepHours * 60) {
+          recovery.push({
+            type: 'Sleep',
+            message: "You slept less than your target. Try sleeping 30 minutes earlier tonight.",
+            icon: 'bed',
+            color: '#6366F1'
+          });
+        }
+      }
+      freshData.habit_recovery = recovery;
+
+      const coachInput = {
+        nutrition: {
+          calories: todaySum?.totalCalories || 0,
+          protein: todaySum?.totalProtein || 0,
+          goalCalories: goals?.caloriesGoal || 2000,
+          goalProtein: goals?.proteinGoal || 150,
+        },
+        hydration: {
+          liters: (todaySum?.totalWaterMl || 0) / 1000,
+          goalLiters: goals?.waterGoalLiters || 3,
+        },
+        sleep: {
+          hours: (todaySum?.sleepMinutes || 0) / 60,
+          goalHours: goals?.sleepGoalHours || 8,
+          qualityScore: sleepMetrics.qualityScore,
+        },
+        score: scoreBreakdownResult,
+        timetable: classes,
+      };
+
+      const coachInsight = coachEngine.generateDailyInsight(coachInput);
+      freshData.summary = { greeting: getGreetingString(), summary_msg: coachInsight };
+
+      setData(freshData);
+
+    } catch (e) {
+      console.error("Dashboard Load Error:", e);
+      setError(true);
+      showToast("Failed to load dashboard. Please try again.", "error");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  const getGreetingString = () => {
+    const hr = new Date().getHours();
+    if (hr < 12) return "Good Morning";
+    if (hr < 17) return "Good Afternoon";
+    return "Good Evening";
+  };
+
+  const handleLogSleep = async () => {
+    setSleepModalVisible(true);
+  };
+
+  const submitSleepLog = async () => {
+    const hours = parseFloat(sleepInput);
+    if (isNaN(hours) || hours < 1 || hours > 16) {
+      showToast('Enter sleep hours between 1-16.', 'error');
+      return;
+    }
+    try {
+      const now = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(now.getDate() - 1);
+      await logStorage.saveSleepLog({
+        date: new Date().toISOString().split('T')[0],
+        startTime: new Date(yesterday.setHours(24 - Math.floor(hours), 0)).toISOString(),
+        endTime: now.toISOString(),
+        durationMinutes: hours * 60
+      });
+      showToast(`${hours}h sleep logged! 🌙`, 'success');
+      setSleepModalVisible(false);
+      setSleepInput('');
+      loadDashboard();
+    } catch (e) {
+      showToast('Could not log sleep session.', 'error');
+    }
+  };
+
+  const handleLogWater = async () => {
+    try {
+      await logStorage.saveWaterLog(250);
+      showToast('Added 250ml water 💧', 'success');
+      loadDashboard();
+    } catch (e) { showToast('Failed to add water', 'error'); }
+  };
+
+  const handleLogWeight = async () => {
+    setWeightModalVisible(true);
+  };
+
+  const submitWeightLog = async () => {
+    const val = parseFloat(weightInput);
+    if (isNaN(val) || val < 20 || val > 300) {
+      showToast('Enter weight between 20-300 kg.', 'error');
+      return;
+    }
+    try {
+      await logStorage.saveWeightLog(val);
+      showToast(val + 'kg saved ⚖️', 'success');
+      setWeightModalVisible(false);
+      setWeightInput('');
+      loadDashboard();
+    } catch (e) {
+      showToast('Failed to log weight.', 'error');
+    }
+  };
+
+  const handleAddCustomFood = async () => {
+    if (!newFoodName || !newFoodCals || !newFoodPro) {
+      showToast("Please fill all fields", "error");
+      return;
+    }
+    try {
+      await logStorage.saveMealLog({
+        date: new Date().toISOString().split('T')[0],
+        name: newFoodName,
+        calories: parseInt(newFoodCals),
+        protein: parseInt(newFoodPro),
+        carbs: 0,
+        fat: 0,
+        loggedAt: new Date().toISOString()
+      });
+      
+      showToast("Custom food logged! 🍲", "success");
+      setNewFoodName('');
+      setNewFoodCals('');
+      setNewFoodPro('');
+      setCustomFoodVisible(false);
+      loadDashboard();
+    } catch (e) { showToast("Failed to add custom food", "error"); }
+  };
+
   useEffect(() => {
-    loadDashboard();
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setError(false);
+        loadDashboard();
+      } else {
+        setLoading(false);
+        // Optionally redirect to login if no guest mode
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    loadDashboard();
+  // 10-second loading timeout
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+        setError(true);
+      }
+    }, 10000);
+    return () => clearTimeout(timeout);
+  }, [loading]);
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const waterDrunk = data?.water_drunk_liters || 0;
+    const waterGoal = data?.water_goal_liters || 4.0;
+    const capitalizedName = userName.charAt(0).toUpperCase() + userName.slice(1);
+
+    if (hour < 12) {
+      return { 
+        title: `Good morning, ${capitalizedName}!`, 
+        sub: "Let's make today count 👍",
+        emoji: '🌤'
+      };
+    } else if (hour < 17) {
+      const isHalfway = waterDrunk >= (waterGoal / 2);
+      return { 
+        title: `Hey ${capitalizedName}!`, 
+        sub: isHalfway ? "You're crushing it today! Keep going." : "Stay on track — you've got this!",
+        emoji: '🔥'
+      };
+    } else {
+      const remainingMl = Math.round(Math.max(0, (waterGoal - waterDrunk) * 1000));
+      return { 
+        title: `Evening, ${capitalizedName}!`, 
+        sub: remainingMl > 0 ? `Almost there — ${remainingMl}ml water left` : "All goals crushed today! 🌟",
+        emoji: '🌙'
+      };
+    }
   };
 
-  if (loading || !data) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-      </View>
-    );
+  const greetingStatus = getGreeting();
+
+  if (loading) {
+    return <DashboardSkeleton />;
   }
 
-  const testTimetableConflict = async () => {
-    const { findAvailableTime } = require('../../src/services/NotificationService');
-    const Notifications = require('expo-notifications');
-    
-    const mockTime = new Date();
-    mockTime.setHours(10, 30, 0, 0);
-    const safeTime = findAvailableTime(mockTime);
-    alert(`Tried to schedule at 10:30 AM.\nTimetable Conflict shift generated:\n${safeTime.toLocaleTimeString()}`);
-    
-    // Quick local notification test
-    const testFireTime = new Date(Date.now() + 5000);
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "🧪 Test Notification Actions",
-        body: "Check if completing/skipping hits the backend log.",
-        categoryIdentifier: 'WATER_REMINDER',
-        sound: true,
-      },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: testFireTime },
-    });
-  };
+  if (!data || error) {
+    return (
+        <View style={[styles.center, { backgroundColor: colors.pageBg, padding: 20 }]}>
+          <View style={{ backgroundColor: colors.card, borderRadius: 16, padding: 24, margin: 16, alignItems: 'center' }}>
+            <Ionicons name="cloud-offline-outline" size={40} color={colors.danger} />
+            <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', marginTop: 12 }}>
+              Could not load data
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 8 }}>
+              Make sure the backend server is running at port 8000, then tap retry.
+            </Text>
+            <TouchableOpacity 
+              style={{ backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 24, marginTop: 16 }}
+              onPress={() => { setError(false); setLoading(true); loadDashboard(); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+  }
 
   return (
-    <ScrollView 
-      style={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      <TouchableOpacity 
-        style={{ backgroundColor: '#10b981', padding: 12, borderRadius: 10, marginBottom: 16, alignItems: 'center' }}
-        onPress={testTimetableConflict}
+    <View style={[styles.container, { backgroundColor: colors.pageBg }]}>
+      {/* Layer 1 — App Bar (Sticky) */}
+      <DashboardHeader
+        userName={userName}
+        level={data.xp_level.level}
+        onMenuPress={() => setMenuVisible(true)}
+      />
+
+      {/* Layer 2 — Hero Section */}
+      <View style={[styles.heroSection, { backgroundColor: colors.heroBg, borderBottomColor: colors.border }]}>
+        <Text style={[styles.heroGreeting, { color: colors.text }]}>
+          {greetingStatus.title} {greetingStatus.emoji}
+        </Text>
+        <Text style={[styles.heroSub, { color: colors.textSecondary }]}>
+          {greetingStatus.sub}
+        </Text>
+      </View>
+
+      {/* Layer 3 — Scrollable Content */}
+      <ScrollView 
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadDashboard(); }} tintColor={colors.primary} />}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.pageBg }]}
       >
-        <Text style={{ color: '#fff', fontWeight: 'bold' }}>🧪 Run Local Reminder Test</Text>
-      </TouchableOpacity>
 
-      {/* 📋 Daily Smart Summary Card */}
-      {summary && (
-        <View style={styles.summaryCard}>
-          {/* Header Row */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <View>
-              <Text style={styles.summaryGreeting}>{summary.greeting} 👋</Text>
-              <Text style={styles.summaryDate}>{summary.day} • {summary.date}</Text>
-            </View>
-            <MaterialCommunityIcons name="calendar-star" size={32} color="#fbbf24" />
-          </View>
-
-          {/* Schedule Section */}
-          <Text style={styles.summarySection}>TODAY'S SCHEDULE</Text>
-          {summary.schedule?.map((s: any, i: number) => (
-            <View key={i} style={styles.scheduleRow}>
-              <Ionicons name="time-outline" size={16} color="#a5b4fc" />
-              <Text style={styles.scheduleLabel}>{s.label}</Text>
-              <Text style={styles.scheduleTime}>{s.time}</Text>
-            </View>
-          ))}
-
-          {/* Water target */}
-          <View style={[styles.riskChip, { backgroundColor: 'rgba(59,130,246,0.25)', marginTop: 12 }]}>
-            <Ionicons name="water" size={16} color="#60a5fa" />
-            <Text style={{ color: '#bfdbfe', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-              Water Target: {summary.water_target}
-            </Text>
-          </View>
-
-          {/* Predicted Risks */}
-          {summary.predicted_risks?.length > 0 && (
-            <>
-              <Text style={[styles.summarySection, { marginTop: 14 }]}>PREDICTIONS</Text>
-              {summary.predicted_risks.map((r: string, i: number) => (
-                <View key={i} style={styles.riskChip}>
-                  <Ionicons name="warning-outline" size={15} color="#fbbf24" />
-                  <Text style={styles.riskText}>{r}</Text>
-                </View>
+        {/* ℹ️ Info/About Menu Modal */}
+        <Modal visible={menuVisible} transparent animationType="fade">
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setMenuVisible(false)}>
+            <View style={[styles.infoMenu, { backgroundColor: colors.card }]}>
+              {[
+                { icon: 'information-circle-outline' as const, label: 'About', color: colors.primary, msg: 'About CampusFuel AI', body: 'CampusFuel AI v2.0.0\n\nAn AI-powered campus health & nutrition tracker that uses the Mifflin-St Jeor equation for personalized targets, EWMA pattern detection, and smart food recommendations.\n\nBuilt with React Native + Firebase + FastAPI.' },
+                { icon: 'document-text-outline' as const, label: 'Terms & Conditions', color: '#8B5CF6', msg: 'Terms & Conditions', body: 'By using CampusFuel AI, you agree to:\n\n1. Your health data is stored securely on Firebase.\n2. AI recommendations are advisory only.\n3. We do not share your data with third parties.\n4. You may delete your account at any time.\n5. App provided "as is" for educational purposes.\n\nLast updated: March 2026' },
+                { icon: 'shield-checkmark-outline' as const, label: 'Privacy Policy', color: '#10B981', msg: 'Privacy Policy', body: '• We collect only health metrics you voluntarily log.\n• All data is encrypted on Google Firebase.\n• We do not serve ads or sell your data.\n• Contact us for full account deletion.\n\nEffective: March 2026' },
+                { icon: 'mail-outline' as const, label: 'Contact Developer', color: '#F59E0B', msg: 'Contact', body: 'Developer: Adarsh Bandaru\n\n📱 Phone: 8885006708\n📧 Email: adarshbandaru05@gmail.com\n🌐 GitHub: github.com/Adarshbandaru\n📱 App: CampusFuel AI v2.0.0\n\nFor bugs, features, or feedback!' },
+                { icon: 'code-slash-outline' as const, label: 'Version 2.0.0', color: '#64748B', msg: 'Version Info', body: 'CampusFuel AI v2.0.0-Gold\n\n• AI Coach with EWMA pattern detection\n• Mifflin-St Jeor personalized nutrition\n• Smart food recommendations\n• Weekly trend analysis\n• Campus schedule integration' },
+              ].map((item, idx) => (
+                <React.Fragment key={item.label}>
+                  {idx > 0 && <View style={[styles.infoMenuDivider, { backgroundColor: colors.border }]} />}
+                  <TouchableOpacity style={styles.infoMenuItem} onPress={() => { setMenuVisible(false); Alert.alert(item.msg, item.body); }}>
+                    <Ionicons name={item.icon} size={20} color={item.color} />
+                    <Text style={[styles.infoMenuText, { color: colors.text }]}>{item.label}</Text>
+                  </TouchableOpacity>
+                </React.Fragment>
               ))}
-            </>
-          )}
-
-          {/* Habit Focus */}
-          {summary.habit_focus && (
-            <>
-              <Text style={[styles.summarySection, { marginTop: 14 }]}>HABIT FOCUS</Text>
-              <View style={styles.riskChip}>
-                <Ionicons name="flame" size={15} color="#f97316" />
-                <Text style={[styles.riskText, { color: '#fed7aa' }]}>{summary.habit_focus}</Text>
-              </View>
-            </>
-          )}
-
-          {/* Habit Recovery Nudges */}
-          {summary.habit_recovery?.length > 0 && (
-            <>
-              <Text style={[styles.summarySection, { marginTop: 14, color: '#34d399' }]}>RECOVERY ACTIONS</Text>
-              {summary.habit_recovery.map((r: string, i: number) => (
-                <View key={i} style={[styles.riskChip, { backgroundColor: 'rgba(52,211,153,0.15)', borderColor: 'rgba(52,211,153,0.3)', borderWidth: 1 }]}>
-                  <Ionicons name="medical-outline" size={16} color="#4ade80" />
-                  <Text style={[styles.riskText, { color: '#a7f3d0' }]}>{r}</Text>
-                </View>
-              ))}
-            </>
-          )}
-        </View>
-      )}
-
-      {/* Life Consistency Score Card */}
-      <View style={[styles.card, styles.heroCard]}>
-
-        <View style={styles.heroHeader}>
-          <TouchableOpacity activeOpacity={1} onPress={handleDevTrigger}>
-            <Text style={styles.heroTitle}>Life Consistency Score</Text>
+            </View>
           </TouchableOpacity>
-          <MaterialCommunityIcons name="heart-pulse" size={28} color="#fff" />
-        </View>
-        <View style={{flexDirection: 'row', alignItems: 'flex-end', marginVertical: 0}}>
-           <Text style={styles.scoreText}>{data.life_consistency_score}</Text>
-           <Text style={{color: '#fff', fontSize: 24, marginBottom: 20, marginLeft: 2, fontWeight: 'bold'}}>/ 100</Text>
-        </View>
-        
-        {data.score_reason && <Text style={styles.energyReason}>{data.score_reason}</Text>}
+        </Modal>
 
-        {data.score_breakdown && (
-            <View style={{flexDirection: 'row', flexWrap: 'wrap', marginTop: 20, justifyContent: 'space-between'}}>
-               {Object.entries(data.score_breakdown).map(([k,v]) => (
-                   <View key={k} style={{width: '30%', marginBottom: 12}}>
-                       <Text style={{color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600'}}>{k}</Text>
-                       <Text style={{color: '#fff', fontSize: 16, fontWeight: 'bold'}}>{v as number} pts</Text>
-                   </View>
-               ))}
-            </View>
+        {/* 🏆 Life Consistency Score */}
+        <ScoreCard
+          cardFade1={cardFade1}
+          cardSlide1={cardSlide1}
+          scoreGlow={scoreGlow}
+          lifeConsistencyScore={data.life_consistency_score}
+          scoreLabel={data.score_label}
+          scoreBreakdown={data.score_breakdown}
+          onPress={() => setScoreDetailsVisible(true)}
+        />
+
+        {/* 🎯 Today's Wins */}
+        <TodaysWins
+          cardFade2={cardFade2}
+          cardSlide2={cardSlide2}
+          waterDone={data.water_drunk_liters >= data.water_goal_liters}
+          caloriesDone={data.calories_consumed >= data.calories_goal}
+          proteinDone={data.protein_consumed >= data.protein_goal}
+          sleepDone={data.sleep_hours_actual >= data.sleep_hours_goal}
+        />
+
+        {/* 🔥 Weekly Activity Strip */}
+        <WeeklyTracker streakCounters={data.streak_counters} />
+
+        {/* 🤖 Student Routine AI */}
+        {auth.currentUser?.uid && (
+          <StudentRoutineCard uid={auth.currentUser.uid} />
         )}
-      </View>
 
-      {/* Gamification Module */}
-      <View style={[styles.card, { borderColor: '#fcd34d', borderWidth: 2, padding: 16 }]}>
-          <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
-             <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                <MaterialCommunityIcons name="star-shooting" size={28} color="#f59e0b" />
-                <Text style={{fontSize: 20, fontWeight: '800', color: '#1f2937', marginLeft: 8}}>Level {data.level}</Text>
-             </View>
-             <Text style={{color: '#6b7280', fontWeight: 'bold'}}>{data.xp_current} / {data.xp_target} XP</Text>
-          </View>
-          
-          {/* Custom XP Bar */}
-          <View style={{width: '100%', height: 12, backgroundColor: '#fef3c7', borderRadius: 10, overflow: 'hidden', marginBottom: 16}}>
-             <View style={{width: `${data.xp_progress_percentage}%`, height: '100%', backgroundColor: '#f59e0b', borderRadius: 10}} />
-          </View>
+        {/* ⚡ Quick Actions */}
+        <QuickActions
+          onLogMeal={() => setMealPickerVisible(true)}
+          onLogWater={handleLogWater}
+          onLogWeight={handleLogWeight}
+          onLogSleep={handleLogSleep}
+        />
 
-          {/* Habit Streaks Badges */}
-          <Text style={{fontSize: 14, fontWeight: '700', color: '#4b5563', marginBottom: 8}}>Active Streaks</Text>
-          <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16}}>
-             {data.streak_counters && Object.entries(data.streak_counters).map(([key, count]) => (
-                <View key={key} style={{backgroundColor: (count as number) > 0 ? '#dcfce7' : '#f3f4f6', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, flexDirection: 'row', alignItems: 'center'}}>
-                    <Text style={{marginRight: 4}}>{(count as number) > 0 ? '🔥' : '❄️'}</Text>
-                    <Text style={{color: (count as number) > 0 ? '#166534' : '#9ca3af', fontWeight: 'bold'}}>{count as number}d {key}</Text>
+        {/* 🍽 Meal Category Picker */}
+        <Modal visible={mealPickerVisible} transparent animationType="slide">
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setMealPickerVisible(false)}>
+            <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Log a Meal</Text>
+                <TouchableOpacity onPress={() => setMealPickerVisible(false)}>
+                  <Ionicons name="close" size={24} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '500', marginBottom: 16 }}>What are you logging?</Text>
+              <View style={styles.actionGrid}>
+                {[
+                  { label: 'Breakfast', emoji: '☕', color: '#F59E0B', bg: theme === 'dark' ? '#451A03' : '#FFFBEB' },
+                  { label: 'Lunch', emoji: '🍛', color: '#10B981', bg: theme === 'dark' ? '#064E3B' : '#ECFDF5' },
+                  { label: 'Snack', emoji: '🍪', color: '#8B5CF6', bg: theme === 'dark' ? '#2E1065' : '#F5F3FF' },
+                  { label: 'Dinner', emoji: '🍝', color: '#EF4444', bg: theme === 'dark' ? '#450A0A' : '#FFF1F2' },
+                ].map((meal, idx) => (
+                  <TouchableOpacity key={idx} style={styles.actionItem} onPress={() => {
+                    setMealPickerVisible(false);
+                    // Navigate to Log tab
+                    Alert.alert(`${meal.label} ✅`, `Go to the Log tab to add your ${meal.label.toLowerCase()} items!\n\nYour plate builder has all the foods ready.`);
+                  }}>
+                    <View style={[styles.actionIconCircle, { backgroundColor: meal.bg }]}>
+                      <Text style={{ fontSize: 28 }}>{meal.emoji}</Text>
+                    </View>
+                    <Text style={[styles.actionLabelText, { color: colors.textSecondary }]}>{meal.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ⚖️ Weight Input Modal */}
+        <Modal visible={weightModalVisible} transparent animationType="fade">
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setWeightModalVisible(false)}>
+            <View style={[styles.weightSleepModal, { backgroundColor: colors.card }]} onStartShouldSetResponder={() => true}>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, marginBottom: 4 }}>⚖️ Log Weight</Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 16 }}>Enter your current weight in kg</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: theme === 'dark' ? '#1E293B' : '#F8FAFC', color: colors.text, borderColor: colors.border }]}
+                placeholder="e.g. 47"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={weightInput}
+                onChangeText={setWeightInput}
+                autoFocus
+              />
+              <TouchableOpacity style={[styles.modalSubmitBtn, { backgroundColor: colors.primary }]} onPress={submitWeightLog}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* 🌙 Sleep Input Modal */}
+        <Modal visible={sleepModalVisible} transparent animationType="fade">
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSleepModalVisible(false)}>
+            <View style={[styles.weightSleepModal, { backgroundColor: colors.card }]} onStartShouldSetResponder={() => true}>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, marginBottom: 4 }}>🌙 Log Sleep</Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 16 }}>How many hours did you sleep last night?</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: theme === 'dark' ? '#1E293B' : '#F8FAFC', color: colors.text, borderColor: colors.border }]}
+                placeholder="e.g. 7.5"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={sleepInput}
+                onChangeText={setSleepInput}
+                autoFocus
+              />
+              <TouchableOpacity style={[styles.modalSubmitBtn, { backgroundColor: colors.primary }]} onPress={submitSleepLog}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* 🥗 Meal Tracking — Horizontal Cards */}
+        {data?.meals_tracker && (
+          <View style={{ marginBottom: 20 }}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Meals</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {['Breakfast', 'Lunch', 'Protein Shake', 'Dinner'].map((meal, idx) => {
+                const status = data.meals_tracker[meal];
+                const isDone = status === 'Completed';
+                const isMissed = status === 'Missed';
+                const mealIcons: Record<string, string> = { 'Breakfast': '🥣', 'Lunch': '🍱', 'Protein Shake': '🥤', 'Dinner': '🍽️' };
+                const statusColor = isDone ? colors.success : isMissed ? colors.danger : colors.warning;
+                const statusBg = isDone ? (theme === 'dark' ? '#064E3B' : '#ECFDF5') : isMissed ? (theme === 'dark' ? '#450A0A' : '#FEF2F2') : (theme === 'dark' ? '#451A03' : '#FEF3C7');
+
+                return (
+                  <View key={idx} style={[styles.mealCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <Text style={{ fontSize: 24, marginBottom: 6 }}>{mealIcons[meal]}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{meal.length > 10 ? meal.substring(0,8)+'..' : meal}</Text>
+                    <View style={[styles.mealStatusBadge, { backgroundColor: statusBg }]}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: statusColor, marginRight: 4 }} />
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: statusColor, textTransform: 'uppercase' }}>{status}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* 🏆 Daily Challenge Section */}
+        {data?.daily_challenge && (
+          <View style={{ marginBottom: 24 }}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Today's Challenge</Text>
+            <View style={[styles.challengeCard, { backgroundColor: theme === 'dark' ? '#312E81' : '#EEF2FF', borderColor: theme === 'dark' ? '#3730A3' : '#E0E7FF' }]}>
+              <View style={styles.challengeHeader}>
+                <Ionicons name="flame" size={20} color={colors.primary} />
+                <Text style={[styles.challengeTitle, { color: colors.primary }]}>{data.daily_challenge.title}</Text>
+              </View>
+              <View style={styles.challengeTasks}>
+                {data.daily_challenge.tasks.map((task: string, idx: number) => (
+                  <View key={idx} style={styles.challengeTaskRow}>
+                    <View style={[styles.taskDot, { backgroundColor: colors.primary }]} />
+                    <Text style={[styles.taskText, { color: theme === 'dark' ? '#C7D2FE' : '#3730A3' }]}>{task}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={[styles.rewardBadge, { backgroundColor: theme === 'dark' ? '#064E3B' : '#ECFDF5' }]}>
+                <Ionicons name="star" size={14} color={colors.success} style={{marginRight: 4}} />
+                <Text style={[styles.rewardText, { color: colors.success }]}>Reward: {data.daily_challenge.reward}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* 📊 Today's Progress Section */}
+        <ProgressSection
+          cardFade3={cardFade3}
+          cardSlide3={cardSlide3}
+          caloriesConsumed={data.calories_consumed}
+          caloriesGoal={data.calories_goal}
+          proteinConsumed={data.protein_consumed}
+          proteinGoal={data.protein_goal}
+          waterDrunkLiters={data.water_drunk_liters}
+          waterGoalLiters={data.water_goal_liters}
+          sleepHoursActual={data.sleep_hours_actual}
+          sleepHoursGoal={data.sleep_hours_goal}
+        />
+
+        {/* 🌙 Sleep — Compact Inline Metrics */}
+        <View style={[styles.sleepInlineCard, { backgroundColor: colors.card }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <Ionicons name="moon" size={16} color="#6366F1" />
+            <Text style={{ fontSize: 14, fontWeight: '800', color: colors.text, marginLeft: 8 }}>Sleep</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: data.sleep_quality_score > 70 ? colors.success : colors.warning }}>{data.sleep_quality_score}</Text>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: colors.textSecondary }}>Quality</Text>
+            </View>
+            <View style={{ width: 1, backgroundColor: colors.border }} />
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text }}>{Number(data.sleep_hours_actual).toFixed(1)}h</Text>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: colors.textSecondary }}>Duration</Text>
+            </View>
+            <View style={{ width: 1, backgroundColor: colors.border }} />
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text }}>{data.sleep_consistency}%</Text>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: colors.textSecondary }}>Consistency</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* 💙 Gentle Habit Recovery */}
+        {data?.habit_recovery && data.habit_recovery.length > 0 && (
+          <View style={{ marginBottom: 24, marginTop: 8 }}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Gentle Reminders</Text>
+            {data.habit_recovery.map((rec: any, idx: number) => (
+              <View key={idx} style={[styles.recoveryCard, { backgroundColor: rec.color + '1A', borderColor: rec.color + '33' }]}>
+                <View style={[styles.recoveryIconWrap, { backgroundColor: rec.color + '33' }]}>
+                  <Ionicons name={rec.icon} size={20} color={rec.color} />
                 </View>
-             ))}
-          </View>
-
-          {/* Achievements Scroller */}
-          {data.achievements && data.achievements.length > 0 && (
-             <>
-               <Text style={{fontSize: 14, fontWeight: '700', color: '#4b5563', marginBottom: 8}}>Achievements</Text>
-               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {data.achievements.map((ach: string, i: number) => (
-                      <View key={`ach-${i}`} style={{backgroundColor: '#3b82f6', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, marginRight: 8, flexDirection: 'row', alignItems: 'center'}}>
-                          <MaterialCommunityIcons name="trophy-award" size={20} color="#fde047" />
-                          <Text style={{color: '#fff', fontWeight: 'bold', marginLeft: 6}}>{ach}</Text>
-                      </View>
-                  ))}
-               </ScrollView>
-             </>
-          )}
-      </View>
-      
-      {/* Behavioral AI Prediction Engine */}
-      {data.prediction_insight && (
-          <View style={[styles.card, { borderColor: '#818cf8', borderWidth: 2, padding: 16 }]}>
-              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12}}>
-                  <MaterialCommunityIcons name="brain" size={28} color="#6366f1" />
-                  <Text style={{fontSize: 20, fontWeight: '800', color: '#312e81', marginLeft: 8}}>Behavioral AI Engine</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.recoveryTitle, { color: rec.color }]}>{rec.type} Recovery</Text>
+                  <Text style={[styles.recoveryDesc, { color: theme === 'dark' ? '#E2E8F0' : '#475569' }]}>{rec.message}</Text>
+                </View>
               </View>
-
-              {/* Prediction Insight */}
-              <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12}}>
-                  <Ionicons name="analytics-outline" size={20} color="#4f46e5" style={{marginTop: 2}} />
-                  <Text style={{fontSize: 15, fontWeight: '600', color: '#4338ca', marginLeft: 8, flex: 1}}>
-                      {data.prediction_insight}
-                  </Text>
-              </View>
-
-              {/* Preventive Action */}
-              {data.preventive_suggestion && data.preventive_suggestion !== "" && (
-                  <View style={{backgroundColor: '#e0e7ff', padding: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12}}>
-                      <Ionicons name="bulb" size={20} color="#f59e0b" />
-                      <Text style={{fontSize: 14, fontWeight: '700', color: '#1e3a8a', marginLeft: 8, flex: 1}}>
-                          Action: {data.preventive_suggestion}
-                      </Text>
-                  </View>
-              )}
-
-              {/* Adaptive Reminders */}
-              {data.adaptive_reminders && data.adaptive_reminders.length > 0 && (
-                  <View style={{marginTop: 4, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb'}}>
-                      <Text style={{fontSize: 13, fontWeight: '700', color: '#6b7280', marginBottom: 8}}>ADAPTIVE REMINDERS ACTIVE</Text>
-                      {data.adaptive_reminders.map((rem: string, idx: number) => (
-                          <View key={`rem-${idx}`} style={{flexDirection: 'row', alignItems: 'center', marginBottom: 6}}>
-                              <Ionicons name="notifications-circle" size={18} color="#10b981" />
-                              <Text style={{fontSize: 13, color: '#4b5563', marginLeft: 6, flex: 1}}>{rem}</Text>
-                          </View>
-                      ))}
-                  </View>
-              )}
+            ))}
           </View>
-      )}
+        )}
 
-      {/* AI Habit Insights */}
-      {insights.length > 0 && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>AI Habit Insights</Text>
-            <Ionicons name="sparkles" size={24} color="#f59e0b" />
+        {/* ⏰ Smart Daily Timeline Section */}
+        <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 12 }]}>Smart Daily Timeline</Text>
+        
+        {data.nextAction && (
+          <View style={[styles.nextActionCard, { backgroundColor: theme === 'dark' ? '#1E1B4B' : '#EEF2FF', borderColor: theme === 'dark' ? '#312E81' : '#E0E7FF' }]}>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 6}}>
+              <Ionicons name="time" size={16} color={colors.primary} />
+              <Text style={{color: colors.primary, fontSize: 13, fontWeight: '800', marginLeft: 6, textTransform: 'uppercase'}}>Next Action</Text>
+            </View>
+            <Text style={{color: theme === 'dark' ? '#C7D2FE' : '#3730A3', fontSize: 18, fontWeight: '700'}}>
+              {data.nextAction.label} <Text style={{fontWeight: '400'}}>{data.nextAction.time_remaining}</Text>
+            </Text>
           </View>
-          {insights.map((insight, idx) => (
-            <View key={idx} style={styles.insightRow}>
-              <View style={styles.insightIconWrap}>
-                 <Ionicons name="information-outline" size={18} color="#3b82f6" />
+        )}
+
+        <View style={[styles.scheduleCard, { backgroundColor: colors.card, paddingVertical: 8 }]}>
+          {(data.timelineData || []).map((t: any, idx: number) => (
+            <View key={idx} style={[styles.scheduleItem, idx === (data.timelineData || []).length - 1 && { borderBottomWidth: 0 }, { borderBottomColor: colors.border }]}>
+              <View style={styles.scheduleLeft}>
+                <View style={[styles.scheduleIcon, { backgroundColor: theme === 'dark' ? '#1E293B' : '#F8FAFC' }]}>
+                  <MaterialCommunityIcons 
+                    name={t.icon as any} 
+                    size={20} 
+                    color={colors.textSecondary} 
+                  />
+                </View>
+                <View>
+                  <Text style={[styles.scheduleLabel, { color: colors.text }]}>{t.label}</Text>
+                </View>
               </View>
-              <Text style={styles.insightText}>{insight}</Text>
+              <Text style={[styles.scheduleTime, { color: colors.textSecondary }]}>{t.time}</Text>
             </View>
           ))}
         </View>
-      )}
 
-      <Text style={styles.sectionTitle}>Today's Summary</Text>
+        {/* ✨ AI Insight Section */}
+        <AIInsight summaryMsg={data.summary?.summary_msg} />
 
-      <View style={styles.grid}>
-        {/* Habit Streak Card */}
-        <View style={styles.cardHalf}>
-          <Ionicons name="flame" size={28} color="#f97316" />
-          <Text style={styles.cardValue}>{data.habit_streak}</Text>
-          <Text style={styles.cardLabel}>Day Streak 🔥</Text>
-        </View>
+        {/* 🥩 Protein Recovery Suggestions */}
+        {data.protein_consumed < data.protein_goal && (
+          <View style={[styles.suggestionSection, { backgroundColor: theme === 'dark' ? '#2E1065' : '#F5F3FF', borderColor: theme === 'dark' ? '#4C1D95' : '#DDD6FE' }]}>
+            <View style={styles.suggestionHeader}>
+              <MaterialCommunityIcons name="arm-flex" size={20} color={colors.secondary} />
+              <Text style={[styles.suggestionTitle, { color: colors.secondary }]}>Protein Boost Needed</Text>
+            </View>
+            <Text style={[styles.suggestionSub, { color: theme === 'dark' ? '#DDD6FE' : '#6D28D9' }]}>You need {Math.round(data.protein_goal - data.protein_consumed)}g more protein today. Try:</Text>
+            
+            <View style={styles.suggestionGrid}>
+              {[
+                { label: 'Add Milk', icon: 'cup' },
+                { label: 'Add Paneer', icon: 'cheese' },
+                { label: 'Add Peanut Butter', icon: 'nut' },
+                { label: 'Protein Shake', icon: 'bottle-tonic' }
+              ].map((item, idx) => (
+                <TouchableOpacity key={idx} style={[styles.suggestionChip, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <MaterialCommunityIcons name={item.icon as any} size={16} color={colors.secondary} />
+                  <Text style={[styles.suggestionChipText, { color: colors.text }]}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
-        {/* Small Nutrition Summary */}
-        <View style={styles.cardHalf}>
-          <Ionicons name="barbell" size={28} color="#8b5cf6" />
-          <Text style={styles.cardValue}>{data.protein_consumed}g</Text>
-          <Text style={styles.cardLabel}>Protein Consumed</Text>
-        </View>
-      </View>
+        {/* 🔥 Evening Calorie Boost Suggestions */}
+        {new Date().getHours() >= 18 && data.calories_consumed < data.calories_goal * 0.9 && (
+          <View style={[styles.suggestionSection, { backgroundColor: theme === 'dark' ? '#431407' : '#FFF7ED', borderColor: theme === 'dark' ? '#7C2D12' : '#FED7AA' }]}>
+            <View style={styles.suggestionHeader}>
+              <MaterialCommunityIcons name="flash" size={20} color={colors.warning} />
+              <Text style={[styles.suggestionTitle, { color: theme === 'dark' ? '#FDBA74' : '#C2410C' }]}>Fuel Up: Low Calories</Text>
+            </View>
+            <Text style={[styles.suggestionSub, { color: theme === 'dark' ? '#FFEDD5' : '#9A3412' }]}>It's evening and you're under your calorie goal. Grab a quick snack:</Text>
+            
+            <View style={styles.suggestionGrid}>
+              {[
+                { label: 'Banana', icon: 'food-apple' },
+                { label: 'Milk', icon: 'cup' },
+                { label: 'Peanut Butter', icon: 'nut' },
+                { label: 'Oats', icon: 'bowl-mix' }
+              ].map((item, idx) => (
+                <TouchableOpacity key={idx} style={[styles.suggestionChip, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <MaterialCommunityIcons name={item.icon as any} size={16} color={colors.warning} />
+                  <Text style={[styles.suggestionChipText, { color: colors.text }]}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
-      {/* Water Tracker Card */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Water Intake</Text>
-          <Ionicons name="water" size={24} color="#3b82f6" />
-        </View>
-        <View style={styles.nutritionRow}>
-          <Text style={styles.nutritionLabel}>{data.water_drunk_liters} Liters / {data.water_goal_liters} Liters Goal</Text>
-        </View>
-        <ProgressBar progress={(data.water_drunk_liters / data.water_goal_liters) * 100} color="#3b82f6" height={10} />
-      </View>
+        <View style={{ height: 60 }} />
+      </ScrollView>
 
-      {/* Meal Tracker */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Meal Tracker</Text>
-          <Ionicons name="restaurant" size={24} color="#f59e0b" />
-        </View>
-        
-        {data.meals_tracker && Object.keys(data.meals_tracker).map((mealName) => (
-          <TouchableOpacity 
-            key={mealName} 
-            style={styles.mealChecklistRow}
-            onPress={() => {
-              setData({
-                ...data,
-                meals_tracker: {
-                  ...data.meals_tracker,
-                  [mealName]: !data.meals_tracker[mealName]
-                }
-              });
-            }}
-          >
-            <Ionicons 
-              name={data.meals_tracker[mealName] ? "checkmark-circle" : "ellipse-outline"} 
-              size={26} 
-              color={data.meals_tracker[mealName] ? "#10b981" : "#d1d5db"} 
-            />
-            <Text style={[styles.mealChecklistText, data.meals_tracker[mealName] && styles.mealChecklistTextDone]}>
-              {mealName}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/* ➕ Floating Action Button */}
+      <Animated.View style={[
+        styles.fab, 
+        { 
+          backgroundColor: colors.primary, 
+          shadowColor: colors.primary,
+          transform: [{ scale: pulseAnimFAB }]
+        }
+      ]}>
+        <TouchableOpacity 
+          style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }} 
+          onPress={() => setQuickActionsVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add" size={32} color="#FFFFFF" />
+        </TouchableOpacity>
+      </Animated.View>
 
-      <View style={{ height: 30 }} />
-      
-      {/* Developer Insights Modal */}
+      {/* 📋 Quick Action Sheet */}
       <Modal
-        visible={showDevModal}
-        animationType="slide"
+        visible={quickActionsVisible}
         transparent={true}
-        onRequestClose={() => setShowDevModal(false)}
+        animationType="slide"
+        onRequestClose={() => setQuickActionsVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.devContainer}>
-            <View style={styles.devHeader}>
-              <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                <Ionicons name="terminal" size={20} color="#10b981" />
-                <Text style={styles.devTitle}>DEVELOPER CONSOLE</Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowDevModal(false)}>
-                <Ionicons name="close" size={24} color="#6b7280" />
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setQuickActionsVisible(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Quick Actions</Text>
+              <TouchableOpacity onPress={() => setQuickActionsVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.devContent}>
-              {!devInsights ? (
-                <ActivityIndicator color="#10b981" style={{marginTop: 50}} />
-              ) : (
-                <>
-                  <Text style={styles.devJsonLabel}>// AI Prediction Model Insights</Text>
-                  <View style={styles.devJsonBox}>
-                    <Text style={styles.devJsonText}>Confidence: {devInsights.ai_confidence_score}%</Text>
-                    <Text style={styles.devJsonText}>Engine: {devInsights.model_insights.prediction_engine}</Text>
-                    <Text style={styles.devJsonText}>Features: {devInsights.model_insights.active_features.join(', ')}</Text>
+            <View style={styles.actionGrid}>
+              {[
+                { label: 'Log Food', icon: 'food-apple', color: colors.primary, bg: theme === 'dark' ? '#312E81' : '#EEF2FF' },
+                { label: 'Add Water', icon: 'water', color: colors.info, bg: theme === 'dark' ? '#0C4A6E' : '#F0F9FF' },
+                { label: 'Log Weight', icon: 'scale-bathroom', color: colors.success, bg: theme === 'dark' ? '#064E3B' : '#ECFDF5' },
+                { label: 'Upload Label', icon: 'scan', color: colors.warning, bg: theme === 'dark' ? '#451A03' : '#FFFBEB' },
+                { label: 'Custom Food', icon: 'plus-circle', color: colors.secondary, bg: theme === 'dark' ? '#2E1065' : '#F5F3FF' }
+              ].map((action, idx) => (
+                <TouchableOpacity 
+                  key={idx} 
+                  style={styles.actionItem} 
+                  onPress={() => {
+                    setQuickActionsVisible(false);
+                    if (action.label === 'Custom Food') setCustomFoodVisible(true);
+                  }}
+                >
+                  <View style={[styles.actionIconCircle, { backgroundColor: action.bg }]}>
+                    {action.icon === 'scan' ? (
+                      <Ionicons name="scan" size={28} color={action.color} />
+                    ) : (
+                      <MaterialCommunityIcons name={action.icon as any} size={28} color={action.color} />
+                    )}
                   </View>
-
-                  <Text style={styles.devJsonLabel}>// Habit Analytics Telemetry</Text>
-                  <View style={styles.devJsonBox}>
-                    <Text style={styles.devJsonText}>Completion Ratio (30d): {devInsights.habit_analytics.completion_ratio_30d}</Text>
-                    <Text style={styles.devJsonText}>Trend: {devInsights.habit_analytics.consistency_trend}</Text>
-                    <Text style={styles.devJsonText}>Optimal Log Window: {devInsights.habit_analytics.optimal_log_time}</Text>
-                  </View>
-
-                  <Text style={styles.devJsonLabel}>// System Architecture Health</Text>
-                  <View style={styles.devJsonBox}>
-                    <Text style={styles.devJsonText}>DB Latency: {devInsights.system_health.database_latency}</Text>
-                    <Text style={styles.devJsonText}>Queue: {devInsights.system_health.sync_queue_status}</Text>
-                  </View>
-                  
-                  <Text style={styles.devJsonLabel}>// RAW JSON PAYLOAD</Text>
-                  <View style={[styles.devJsonBox, {backgroundColor: '#000'}]}>
-                    <Text style={[styles.devJsonText, {color: '#10b981', fontFamily: 'monospace'}]}>
-                      {JSON.stringify(devInsights, null, 2)}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </ScrollView>
+                  <Text style={[styles.actionLabelText, { color: colors.textSecondary }]}>{action.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+      {/* 🍲 Custom Food Modal */}
+      <Modal
+        visible={customFoodVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setCustomFoodVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { borderRadius: 24, marginBottom: 100, marginHorizontal: 20, backgroundColor: colors.card }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Custom Food</Text>
+            <TextInput 
+              style={[styles.input, { backgroundColor: colors.inputBg, color: colors.text, borderColor: colors.border }]} 
+              placeholder="Food Name (e.g. Mass Gainer)" 
+              placeholderTextColor={colors.textSecondary}
+              value={newFoodName} 
+              onChangeText={setNewFoodName} 
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <TextInput 
+                style={[styles.input, { width: '48%', backgroundColor: colors.inputBg, color: colors.text, borderColor: colors.border }]} 
+                placeholder="Calories" 
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={newFoodCals} 
+                onChangeText={setNewFoodCals} 
+              />
+              <TextInput 
+                style={[styles.input, { width: '48%', backgroundColor: colors.inputBg, color: colors.text, borderColor: colors.border }]} 
+                placeholder="Protein (g)" 
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={newFoodPro} 
+                onChangeText={setNewFoodPro} 
+              />
+            </View>
+            <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={handleAddCustomFood}>
+              <Text style={styles.saveBtnText}>Save Food</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelLink} onPress={() => setCustomFoodVisible(false)}>
+              <Text style={[styles.cancelLinkText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-    </ScrollView>
+      {/* 📊 Score Analysis Modal */}
+      <Modal
+        visible={scoreDetailsVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setScoreDetailsVisible(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setScoreDetailsVisible(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.card, minHeight: '50%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Detailed Analysis</Text>
+              <TouchableOpacity onPress={() => setScoreDetailsVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {data?.detailed_analysis?.map((text: string, idx: number) => (
+                <View key={idx} style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, paddingRight: 20}}>
+                   <Ionicons name={text.includes("goal") || text.includes("excellent") || text.includes("Great") ? "checkmark-circle" : "warning"} size={20} color={text.includes("goal") || text.includes("excellent") || text.includes("Great") ? colors.success : colors.warning} style={{marginRight: 12, marginTop: 2}} />
+                   <Text style={{color: colors.text, fontSize: 14, lineHeight: 22}}>{text}</Text>
+                </View>
+              ))}
+              
+              <View style={[styles.divider, { backgroundColor: colors.border, marginVertical: 16, width: '100%', marginLeft: 0 }]} />
+              
+              <Text style={{fontSize: 16, fontWeight: '800', color: colors.text, marginBottom: 8}}>Suggestion:</Text>
+              <Text style={{color: colors.textSecondary, fontSize: 14, lineHeight: 22}}>
+                 {data?.protein_consumed < data?.protein_goal ? "Add paneer or milk to improve protein intake." : (data?.water_drunk_liters < data?.water_goal_liters ? "Drink 500ml water immediately." : "Keep up the great work maintaining your goals!")}
+              </Text>
+              <View style={{height: 40}} />
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: { flex: 1, backgroundColor: '#f2f5f9', padding: 16 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  heroCard: {
-    backgroundColor: '#3b82f6',
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-  },
-  heroHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  heroTitle: { color: '#fff', fontSize: 18, fontWeight: '600', opacity: 0.9 },
-  scoreText: { color: '#fff', fontSize: 42, fontWeight: '800', marginVertical: 10 },
-  energyReason: { color: '#ffffff', fontSize: 14, opacity: 0.9, marginTop: -4, fontWeight: '500' },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1f2937', marginBottom: 12, marginTop: 4 },
-  grid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  cardHalf: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 16,
-    width: '48%',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  cardValue: { fontSize: 24, fontWeight: '800', color: '#1f2937', marginTop: 8 },
-  cardLabel: { fontSize: 13, color: '#6b7280', marginVertical: 4 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: '#1f2937' },
-  nutritionRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  nutritionLabel: { fontSize: 14, fontWeight: '600', color: '#4b5563' },
-  progressContainer: { width: '100%', marginVertical: 4 },
-  progressLabel: { fontSize: 12, marginBottom: 4, color: '#6b7280' },
-  progressBackground: { width: '100%', backgroundColor: '#e5e7eb', borderRadius: 10, overflow: 'hidden' },
-  progressFill: { borderRadius: 10 },
-  mealChecklistRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  mealChecklistText: { fontSize: 16, fontWeight: '500', color: '#374151', marginLeft: 12 },
-  mealChecklistTextDone: { color: '#9ca3af', textDecorationLine: 'line-through' },
-  insightRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 8 },
-  insightIconWrap: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  insightText: { fontSize: 15, color: '#374151', flex: 1, lineHeight: 22 },
+  container: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 80 },
 
-  // Smart Summary Card
-  summaryCard: {
-    backgroundColor: '#1e1b4b',
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 16,
-    shadowColor: '#4f46e5',
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 4,
+  // ─── Header & Hero ────────────────────────────────────
+  heroSection: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 20,
   },
-  summaryGreeting: { color: '#fff', fontSize: 22, fontWeight: '800' },
-  summaryDate: { color: '#a5b4fc', fontSize: 13, marginTop: 2 },
-  summarySection: {
-    color: '#818cf8',
-    fontSize: 11,
+  heroGreeting: {
+    fontSize: 22,
     fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    marginTop: 4,
+    letterSpacing: -0.3,
   },
-  scheduleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(165,180,252,0.15)',
-  },
-  scheduleLabel: { color: '#e0e7ff', fontSize: 14, fontWeight: '600', marginLeft: 8, flex: 1 },
-  scheduleTime: { color: '#a5b4fc', fontSize: 13, fontWeight: '500' },
-  riskChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(251,191,36,0.12)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginBottom: 6,
-  },
-  riskText: { color: '#fde68a', fontSize: 13, marginLeft: 8, flex: 1, lineHeight: 18 },
-
-  // Developer Mode Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'flex-end',
-  },
-  devContainer: {
-    backgroundColor: '#111827',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    height: '80%',
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#374151',
-  },
-  devHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1f2937',
-  },
-  devTitle: {
-    color: '#10b981',
+  heroSub: {
     fontSize: 14,
-    fontWeight: '800',
-    marginLeft: 10,
-    letterSpacing: 2,
+    fontWeight: '500',
+    marginTop: 6,
+    opacity: 0.7,
   },
-  devContent: {
-    flex: 1,
+  topBar: { marginBottom: 4 },
+  appName: { fontSize: 13, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', opacity: 0.5 },
+  profileAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  greeting: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 },
+  summaryMsg: { fontSize: 13, fontWeight: '500', marginTop: 4, marginBottom: 16, opacity: 0.7 },
+  profileBtn: { height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 2 },
+
+  // ─── Info Menu ────────────────────────────────────────
+  infoMenu: { position: 'absolute', top: 100, right: 16, borderRadius: 16, padding: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, elevation: 10, width: 210 },
+  infoMenuItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10 },
+  infoMenuText: { fontSize: 13, fontWeight: '700', marginLeft: 10 },
+  infoMenuDivider: { height: 1, marginHorizontal: 6, opacity: 0.3 },
+
+  // ─── Score Section ────────────────────────────────────
+  scoreSection: { borderRadius: 20, padding: 16, marginBottom: 16, shadowColor: '#6366F1', shadowOpacity: 0.08, shadowRadius: 24, elevation: 4 },
+  sectionLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5, marginBottom: 12, textTransform: 'uppercase', opacity: 0.5 },
+  scoreCircleBox: { marginVertical: 8 },
+  breakdownGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', width: '100%', marginTop: 16 },
+  breakdownItem: { width: '30%', marginBottom: 12 },
+  breakdownLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', opacity: 0.6 },
+  breakdownVal: { fontSize: 11, fontWeight: '800' },
+  miniProgressBack: { height: 4, borderRadius: 2, marginTop: 4, overflow: 'hidden', opacity: 0.3 },
+  miniProgressFill: { height: '100%', borderRadius: 2 },
+  divider: { height: 1, opacity: 0.15 },
+
+  // ─── Quick Actions ────────────────────────────────────
+  quickActionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, gap: 8 },
+  quickActionItem: { flex: 1, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  quickActionEmoji: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  quickActionsGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, gap: 8 },
+  quickActionGridItem: { flex: 1, borderRadius: 16, padding: 12, alignItems: 'center' },
+
+  // ─── Weekly Strip ─────────────────────────────────────
+  weeklyStripCard: { borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
+  weeklyDaysRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4, paddingVertical: 8 },
+  weeklyDayCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  weeklyStripSummary: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, paddingTop: 12, marginTop: 10 },
+  miniStreakPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  actionText: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+
+  // ─── Section Titles ───────────────────────────────────
+  sectionTitle: { fontSize: 17, fontWeight: '800', marginBottom: 12, letterSpacing: -0.3 },
+
+  // ─── Progress Cards ───────────────────────────────────
+  progressCard: { borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
+  progressItem: { marginBottom: 16 },
+  progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  progressLabel: { fontSize: 14, fontWeight: '700' },
+  progressText: { fontSize: 13, fontWeight: '800' },
+  progressGoal: { fontWeight: '500', opacity: 0.5 },
+  progressBarBack: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', borderRadius: 4 },
+
+  // ─── Insight Card ─────────────────────────────────────
+  insightCard: { borderRadius: 16, padding: 16, marginTop: 8, borderWidth: 1 },
+  insightHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  insightTitle: { fontSize: 13, fontWeight: '800', marginLeft: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  insightText: { fontSize: 14, fontWeight: '500', fontStyle: 'italic', lineHeight: 22, opacity: 0.85 },
+
+  // ─── FAB ──────────────────────────────────────────────
+  fab: {
+    position: 'absolute',
+    bottom: 80,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 10,
   },
-  devJsonLabel: {
-    color: '#6b7280',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-    marginTop: 16,
-    fontFamily: 'monospace',
-  },
-  devJsonBox: {
-    backgroundColor: '#1f2937',
-    borderRadius: 8,
-    padding: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#10b981',
-  },
-  devJsonText: {
-    color: '#e5e7eb',
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 4,
-  },
+
+  // ─── Modals ───────────────────────────────────────────
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 8 },
+
+  actionGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  actionItem: { width: '45%', alignItems: 'center', marginBottom: 20 },
+  actionIconCircle: { width: 64, height: 64, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  actionLabelText: { fontSize: 13, fontWeight: '700' },
+
+  // ─── Suggestions ──────────────────────────────────────
+  suggestionSection: { borderRadius: 16, padding: 16, marginTop: 12, borderWidth: 1 },
+  suggestionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  suggestionTitle: { fontSize: 14, fontWeight: '800', marginLeft: 8 },
+  suggestionSub: { fontSize: 12, fontWeight: '500', marginBottom: 12, opacity: 0.8 },
+  suggestionGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  suggestionChip: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, marginRight: 8, marginBottom: 8, borderWidth: 1 },
+  suggestionChipText: { fontSize: 12, fontWeight: '700', marginLeft: 6 },
+
+  // ─── Schedule/Timeline ────────────────────────────────
+  scheduleCard: { borderRadius: 16, padding: 12, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+  mealTrackerCard: { borderRadius: 16, padding: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+  mealTrackerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, paddingHorizontal: 8 },
+  mealTrackerLabel: { fontSize: 14, fontWeight: '700' },
+  mealTrackerStatus: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  mealTrackerStatusText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
+
+  // ─── Challenge ────────────────────────────────────────
+  challengeCard: { borderRadius: 16, padding: 16, borderWidth: 1, shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 8, elevation: 1 },
+  challengeHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  challengeTitle: { fontSize: 15, fontWeight: '800', marginLeft: 8 },
+  challengeTasks: { marginBottom: 12, paddingLeft: 4 },
+  challengeTaskRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  taskDot: { width: 6, height: 6, borderRadius: 3, marginRight: 10 },
+  taskText: { fontSize: 13, fontWeight: '600' },
+  rewardBadge: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
+  rewardText: { fontSize: 11, fontWeight: '800' },
+
+  scheduleItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, paddingHorizontal: 8 },
+  scheduleLeft: { flexDirection: 'row', alignItems: 'center' },
+  scheduleIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  scheduleLabel: { fontSize: 14, fontWeight: '700' },
+  scheduleTime: { fontSize: 14, fontWeight: '800', opacity: 0.6 },
+  adaptiveBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  adaptiveText: { fontSize: 9, fontWeight: '700', marginLeft: 4 },
+  nextActionCard: { borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1 },
+
+  // ─── Streak Badges ────────────────────────────────────
+  streakRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginBottom: 16, paddingHorizontal: 4 },
+  streakBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, minWidth: '45%', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 },
+  streakIconCircle: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  streakCount: { fontSize: 13, fontWeight: '800' },
+  streakLabel: { fontSize: 10, fontWeight: '600' },
+
+  motivationBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, marginTop: 8 },
+  motivationText: { fontSize: 11, fontWeight: '700', marginLeft: 6 },
+
+  // ─── Wins ─────────────────────────────────────────────
+  winsCard: { borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+  winItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  winText: { fontSize: 14, fontWeight: '600', marginLeft: 8 },
+  winPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, borderWidth: 1, marginRight: 8, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1 },
+  winPillText: { fontSize: 12, fontWeight: '700', marginLeft: 6 },
+
+  // ─── Meal Cards ───────────────────────────────────────
+  mealCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, marginRight: 8, minWidth: 88, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1 },
+  mealStatusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+
+  // ─── Recovery ─────────────────────────────────────────
+  recoveryCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, marginBottom: 10 },
+  recoveryIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  recoveryTitle: { fontSize: 12, fontWeight: '800', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
+  recoveryDesc: { fontSize: 12, fontWeight: '500', lineHeight: 18 },
+
+  // ─── Sleep ────────────────────────────────────────────
+  sleepMetricsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  sleepCard: { borderRadius: 16, padding: 16, width: '48%', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+  sleepMetricLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6, opacity: 0.5 },
+  sleepMetricValue: { fontSize: 22, fontWeight: '800' },
+  sleepMetricSub: { fontSize: 10, fontWeight: '500', marginTop: 2, opacity: 0.6 },
+  sleepInlineCard: { borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+
+  // ─── Inputs ───────────────────────────────────────────
+  input: { borderRadius: 12, padding: 14, marginBottom: 12, fontSize: 14, fontWeight: '600', borderWidth: 1 },
+  saveBtn: { borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 8 },
+  saveBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  cancelLink: { alignItems: 'center', marginTop: 12 },
+  cancelLinkText: { fontWeight: '600', fontSize: 13 },
+
+  // ─── Weight/Sleep Modals ──────────────────────────────
+  weightSleepModal: { width: '85%', alignSelf: 'center', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 24, elevation: 12, marginTop: 'auto', marginBottom: 'auto' },
+  modalInput: { borderWidth: 1, borderRadius: 12, padding: 16, fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 16 },
+  modalSubmitBtn: { borderRadius: 12, padding: 14, alignItems: 'center' },
 });
