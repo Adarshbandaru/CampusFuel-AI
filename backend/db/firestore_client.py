@@ -19,20 +19,27 @@ def _init_firebase() -> None:
     if firebase_admin._apps:
         return
 
-    # In production: load from environment variable (JSON string)
+    # 1. Try FIREBASE_SERVICE_ACCOUNT as a JSON string
     service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-    
-    if service_account_json and not os.path.exists(service_account_json):
+    if service_account_json:
         try:
+            # Check if it's already a path to a file
+            if os.path.exists(service_account_json):
+                cred = credentials.Certificate(service_account_json)
+                firebase_admin.initialize_app(cred)
+                print(f"✅ Firebase initialized from file path: {service_account_json}")
+                return
+            
+            # Assume it's a JSON string
             cred_dict = json.loads(service_account_json)
             cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
-            print("✅ Firebase initialized from FIREBASE_SERVICE_ACCOUNT environment variable.")
+            print("✅ Firebase initialized from FIREBASE_SERVICE_ACCOUNT JSON string.")
             return
-        except json.JSONDecodeError:
-            print("❌ FIREBASE_SERVICE_ACCOUNT is not a valid JSON string.")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"⚠️ FIREBASE_SERVICE_ACCOUNT is not a valid JSON string or file path: {e}")
 
-    # Fallback to individual environment variables
+    # 2. Fallback to individual environment variables
     project_id = os.environ.get("FIREBASE_PROJECT_ID")
     private_key = os.environ.get("FIREBASE_PRIVATE_KEY")
     client_email = os.environ.get("FIREBASE_CLIENT_EMAIL")
@@ -48,10 +55,7 @@ def _init_firebase() -> None:
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": (
-                f"https://www.googleapis.com/robot/v1/metadata/x509/"
-                f"{client_email.replace('@', '%40')}"
-            ),
+            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{client_email.replace('@', '%40')}",
             "universe_domain": "googleapis.com",
         }
         cred = credentials.Certificate(service_account_info)
