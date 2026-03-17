@@ -66,12 +66,12 @@ app.include_router(routine.router)
 # ─── Health check ─────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok", "service": "CampusFuel AI API", "version": "2.0.0"}
+def health():
+    return {"status": "ok"}
 
 
 # ─── Dev server ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn  # type: ignore
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)

@@ -11,8 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the code
 COPY . .
 
-# Expose the port FastAPI runs on
-EXPOSE 8000
+# Port is assigned dynamically by the hosting platform (Render/Docker)
 
-# Start the application using gunicorn for production stability
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8000"]
+# Start the application using uvicorn, respecting the $PORT environment variable
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
